@@ -1,0 +1,524 @@
+// ********************************************************
+// ** raiddrinit.cpp **
+//
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+//
+// Version: 1.0.1
+// Author: Brett Dodds (brett.dodds@microsoft.com)
+// 
+// For easy RTL creation of different Basic RAIDDR
+// implementations.
+// ********************************************************
+#if defined(_WIN32)
+    #define SCANF           scanf_s
+    #define FOPEN(a,b,c)    fopen_s(a,b,c)
+#elif defined(__linux__)
+    #define SCANF           scanf
+    #define FOPEN(a,b,c)    fopen(b,c)
+#endif
+
+#define MAX_PATH        512
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <inttypes.h>
+
+typedef struct _RAIDDR_INPUTS
+{
+    int32_t cwBits;
+    int32_t dataBits;
+    int32_t symbolBits;
+    int32_t subCodewords;
+} RAIDDR_INPUTS, *PRAIDDR_INPUTS;
+
+#define VIERROR_SUCCESS             0
+#define VIERROR_DATA_GT_CW          -1
+#define VIERROR_DATAPLUSSYM_GT_CW   -2
+#define VIERROR_SYM_GT_HALFCW       -3
+#define VIERROR_SYM_GT_DATA         -4
+#define VIERROR_SYM_MULT_CW         -5
+#define VIERROR_SCW_MULT_SYM        -6
+int32_t ValidateInputs(RAIDDR_INPUTS ri)
+{
+    if (ri.cwBits > 0 && ri.dataBits > 0)
+    {
+        if (ri.dataBits >= ri.cwBits)
+            return VIERROR_DATA_GT_CW;
+        if (ri.symbolBits > 0 && ri.cwBits <= ri.dataBits + ri.symbolBits)
+            return VIERROR_DATAPLUSSYM_GT_CW;
+    }
+    if (ri.cwBits > 0 && ri.symbolBits > 0 && ri.symbolBits > (ri.cwBits >> 1))
+        return VIERROR_SYM_GT_HALFCW;
+    if (ri.dataBits > 0 && ri.symbolBits > 0 && ri.symbolBits > ri.dataBits)
+        return VIERROR_SYM_GT_DATA;
+    if (ri.cwBits > 0 && ri.symbolBits > 0 && (ri.cwBits % ri.symbolBits) != 0)
+        return VIERROR_SYM_MULT_CW;
+    if (ri.subCodewords > 0 && (ri.symbolBits % ri.subCodewords) != 0)
+        return VIERROR_SCW_MULT_SYM;
+    return VIERROR_SUCCESS;
+}
+
+typedef struct _RAIDDR_ORG
+{
+    int32_t codewords;
+    int32_t symbols;
+    int32_t symbolSize;
+    int32_t lastCwCrcSize;
+} RAIDDR_ORG, *PRAIDDR_ORG;
+
+void showhelp()
+{
+    printf("**** raiddrinit ****\n");
+    printf(" RAIDDR Initialization Utility\n");
+    printf("Usage: raiddrinit [options]\n");
+    printf("Options:\n");
+    printf("  -c <value>  Number of bits in the codeword\n");
+    printf("  -d <value>  Number of data bits\n");
+    printf("  -s <value>  Number of bits that make up a symbol\n");
+    printf("  -p <value>  Number of sub codewords\n");
+    printf("  -o <file>   Output file (default: stdout)\n");
+    printf("  -?          Show this help\n");
+}
+
+static const uint64_t __primitiveRevPoly[65] = {
+    0x0000000000000000,    //0x1,
+    0x0000000000000001,    //0x3,
+    0x0000000000000003,    //0x7,
+    0x0000000000000006,    //0xB,
+    0x000000000000000C,    //0x13,
+    0x0000000000000014,    //0x25,
+    0x0000000000000030,    //0x43,
+    0x0000000000000060,    //0x83,
+    0x00000000000000E1,    //0x187,
+    0x0000000000000110,    //0x211,
+    0x0000000000000240,    //0x409,
+    0x0000000000000500,    //0x805,
+    0x0000000000000E02,    //0x1407,
+    0x0000000000001290,    //0x2129,
+    0x0000000000003006,    //0x5803,
+    0x0000000000006000,    //0x8003,
+    0x0000000000008029,    //0x19401,
+    0x0000000000012000,    //0x20009,
+    0x0000000000020400,    //0x40081,
+    0x0000000000048300,    //0x80609,
+    0x0000000000090000,    //0x100009,
+    0x0000000000140000,    //0x200005,
+    0x0000000000300000,    //0x400003,
+    0x0000000000420000,    //0x800021,
+    0x0000000000A41000,    //0x1000825,
+    0x0000000001200000,    //0x2000009,
+    0x0000000002001404,    //0x480A001,
+    0x0000000004000218,    //0x8C20001,
+    0x0000000009000000,    //0x10000009,
+    0x0000000014000000,    //0x20000005,
+    0x0000000020180004,    //0x48000601,
+    0x0000000048000000,    //0x80000009,
+    0x00000000A1008000,    //0x100010085,
+    0x0000000100080000,    //0x200002001,
+    0x0000000202210000,    //0x400021101,
+    0x0000000500000000,    //0x800000005,
+    0x0000000801000000,    //0x1000000801,
+    0x0000001400404000,    //0x2000404005,
+    0x0000002180000400,    //0x4008000061,
+    0x0000004400000000,    //0x8000000011,
+    0x0000008000011400,    //0x10028800001,
+    0x0000012000000000,    //0x20000000009,
+    0x0000020000000C80,    //0x404C0000001,
+    0x0000042000108000,    //0x80008400021,
+    0x0000080002000110,    //0x108800040001,
+    0x0000110000010020,    //0x208010000011,
+    0x0000200008004020,    //0x410080040001,
+    0x0000420000000000,    //0x800000000021,
+    0x0000C04010000000,    //0x1000000080203,
+    0x0001008000000000,    //0x2000000000201,
+    0x0002000100048000,    //0x4000480020001,
+    0x0004000804000010,    //0x8400001008001,
+    0x0009000000000000,    //0x10000000000009,
+    0x0010000100000804,    //0x24020000100001,
+    0x0020000001000011,    //0x62000020000001,
+    0x0040000040000000,    //0x80000001000001,
+    0x0080000004014000,    //0x100028020000001,
+    0x0102000000000000,    //0x200000000000081,
+    0x0200004000000000,    //0x400000000080001,
+    0x0400000100001010,    //0x840400004000001,
+    0x0C00000000000000,    //0x1000000000000003,
+    0x1000220000010000,    //0x2000100000088001,
+    0x2400000800000010,    //0x4200000004000009,
+    0x6000000000000000,    //0x8000000000000003,
+    0x8040000020000004     //0x12000000400000201,
+};
+
+int32_t GenerateAlphaTable(int32_t bits, int32_t crcBits, uint64_t* p)
+{
+    uint64_t poly = __primitiveRevPoly[crcBits];
+    uint64_t v = p[--bits] = poly;
+    while (bits--)
+        v = p[bits] = (v >> 1) ^ ((v & 1) ? poly : 0);
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+    int32_t arg, i, j, k, m, n, x, y, c;
+    int32_t crcSize;
+    int32_t cwSize;
+    int32_t metadataBits;
+    RAIDDR_INPUTS ri;
+    RAIDDR_ORG ro;
+    uint64_t basepoly = 0xABCDEF0123456789;
+    uint64_t pTemp, pTemp2;
+    uint64_t* pAlpha;
+    uint64_t* pAlphaS;
+    FILE* poutFile;
+    char outFileName[MAX_PATH] = "";
+
+    ri.cwBits = -1;
+    ri.dataBits = -1;
+    ri.symbolBits = -1;
+    ri.subCodewords = -1;
+
+    // Process command-line variables
+    for (arg = 1; arg < argc; arg++)
+    {
+        if (argv[arg][0] == '-' || argv[arg][0] == '/')
+        {
+            switch (argv[arg][1])
+            {
+                case 'c':
+                    ri.cwBits = atoi(argv[arg + 1]);
+                    arg++;
+                    break;
+                case 'd':
+                    ri.dataBits = atoi(argv[arg + 1]);
+                    arg++;
+                    break;
+                case 's':
+                    ri.symbolBits = atoi(argv[arg + 1]);
+                    arg++;
+                    break;
+                case 'p':
+                    ri.subCodewords = atoi(argv[arg + 1]);
+                    arg++;
+                    break;
+                case '?':
+                    showhelp();
+                    return 0;
+                default:
+                    printf("Unknown option: %s\n", argv[arg]);
+                    showhelp();
+                    return 1;
+            }
+        }
+    }
+
+    // Gather input for non-specified variables
+    while (ri.cwBits < 0)
+    {
+        printf("Enter the number of bits in the codeword: ");
+        SCANF("%d", &ri.cwBits);
+    }
+    while (ri.dataBits < 0)
+    {
+        printf("Enter the number of data bits: ");
+        SCANF("%d", &ri.dataBits);
+    }
+    while (ri.symbolBits < 0)
+    {
+        printf("Enter the number of bits that make up a symbol: ");
+        SCANF("%d", &ri.symbolBits);
+    }
+
+    // Validate inputs
+    i = ValidateInputs(ri);
+    if (i < 0)
+    {
+        switch (i)
+        {
+            case VIERROR_DATA_GT_CW:
+                printf("Invalid input: Number of data bits must be less than the number of bits in the codeword\n");
+                break;
+            case VIERROR_DATAPLUSSYM_GT_CW:
+                printf("Invalid input: Number of bits in the codeword must be greater than the number of data bits plus the number of bits that make up a symbol\n");
+                break;
+            case VIERROR_SYM_GT_HALFCW:
+                printf("Invalid input: Number of bits that make up a symbol must be less than half the number of bits in the codeword\n");
+                break;
+            case VIERROR_SYM_GT_DATA:
+                printf("Invalid input: Number of bits that make up a symbol must be less than the number of data bits\n");
+                break;
+            case VIERROR_SYM_MULT_CW:
+                printf("Invalid input: Number of bits in the codeword must be a multiple of the number of bits that make up a symbol\n");
+                break;
+            case VIERROR_SCW_MULT_SYM:
+                printf("Invalid input: Number of sub codewords must evenly split the symbol size\n");
+                break;
+        }
+        return 1;
+    }
+
+    // Derive organization
+    ro.symbols = ri.cwBits / ri.symbolBits;
+    crcSize = ri.cwBits - ri.dataBits - ri.symbolBits; // CRC Size tells us how many bits we have to be able to do CRC
+    if (crcSize <= 0)
+    {
+        printf("Error with input parameters: Note enough bits for ECC\n");
+        return 1;
+    }
+    // Find the right CW size
+    if (ri.subCodewords >= 0)
+    {
+        ro.codewords = ri.subCodewords;
+        ro.symbolSize = ri.symbolBits / ro.codewords;
+    }
+    else
+    {
+        ro.symbolSize = ri.symbolBits - crcSize + 1;
+        while (ri.symbolBits % ro.symbolSize)
+            ro.symbolSize++;
+        ro.codewords = ri.symbolBits / ro.symbolSize;
+    }
+    ro.lastCwCrcSize = ro.symbolSize - (ro.codewords * ro.symbolSize - crcSize);
+
+    // Validate the lastCwCrcSize is big enough to distinguish a symbol, if not... need to increase the number of codewords
+    while ((1 << ro.lastCwCrcSize) < (ro.symbols * (ro.symbolSize - 1)))
+    {
+        do
+        {
+            ro.symbolSize++;
+        } while (ri.symbolBits % ro.symbolSize);
+        ro.codewords = ri.symbolBits / ro.symbolSize;
+        ro.lastCwCrcSize = ro.symbolSize - (ro.codewords * ro.symbolSize - crcSize);
+    }
+
+    // Show summary
+    printf("Summary:\n");
+    printf("  CodeWord:    %d bits\n", ri.cwBits);
+    printf("  Data:        %d bits\n", ri.dataBits);
+    printf("  ECC:         %d bits\n", ri.cwBits - ri.dataBits);
+    printf("  Symbol Size: %d bits\n", ri.symbolBits);
+    printf("  Symbols:     %d\n", ro.symbols);
+    printf("  Sub-CodeWords:   %d\n", ro.codewords);
+    printf("  Sub-SymbolSize:  %d bits\n", ro.symbolSize);
+    printf("  LastCwCrcSize:   %d bits\n", ro.lastCwCrcSize);
+
+    // Print visual representation of the codeword
+    x = 1;
+    while (x * x <= ro.symbolSize)
+        x++;
+    x--;
+    while (x > 1)
+    {
+        if ((ro.symbolSize % x) == 0)
+            break;
+        else
+            x--;
+    }
+    y = ro.symbolSize / x;
+    if (x < y) // Favor width over height
+    {
+        y = x;
+        x = ro.symbolSize / y;
+    }
+
+    printf("Codeword Layout:\n");
+    printf("    Symbol\nCW  ");
+    for (j = 0; j < ro.symbols; j++)
+        printf("%*d", x + 1, j);
+    for (m = 0; m < ro.codewords; m++)
+    {
+        for (i = 0; i < y; i++)
+        {
+            printf("\n");
+            if (i == 0)
+                printf("%2d  ", m);
+            else
+                printf("    ");
+            for (j = 0; j < ro.symbols; j++)
+            {
+                printf(" ");
+                for (k = 0; k < x; k++)
+                {
+                    n = j * ro.symbolSize * ro.codewords + m * ro.symbolSize + i * x + k;
+                    if (j == ro.symbols - 1)
+                        c = 'X';
+                    else if (n >= ro.symbolSize * ro.codewords * (ro.symbols - 2) + ro.symbolSize - ro.lastCwCrcSize)
+                    //else if (j == ro.symbols - 2 && ((m * y + i) * x + k) < ro.symbolSize - ro.lastCwCrcSize)
+                        c = (m & 1) ? 'R' : 'r';
+                    else
+                        c = j + ((m & 1) ? 'A' : 'a');
+                    printf("%c", c);
+                }
+            }
+        }
+    }
+
+    // Generate alpha values - Do this for upper CRC's and the lower CRC
+    printf("\nGenerating CRC alpha values...\n");
+    cwSize = (ro.symbols - 1) * ro.symbolSize;
+    pAlpha = malloc(sizeof(uint64_t) * cwSize);
+    pAlphaS = malloc(sizeof(uint64_t) * cwSize);
+    GenerateAlphaTable(cwSize, ro.symbolSize, pAlpha);
+    GenerateAlphaTable(cwSize, ro.lastCwCrcSize, pAlphaS);
+
+    // Generate the Verilog code
+    printf("\nGenerating RTL code...\n");
+    metadataBits = ro.symbolSize - ro.lastCwCrcSize;
+    if (outFileName[0] == 0)
+        poutFile = stdout;
+    else
+    {
+        FOPEN(&poutFile, outFileName, "w");
+        if (poutFile == NULL)
+        {
+            printf("Error opening output file: %s\n", outFileName);
+            printf("...Using stdout instead\n");
+            poutFile = stdout;
+        }
+    }
+    fprintf(poutFile,
+        "// Basic RAIDDR RTL File generated by \"raiddrinit\" (C) Microsoft Corp.\n"
+        "// Questions? Contact: Brett Dodds (brett.dodds@microsoft.com)\n"
+        "// Settings:\n"
+        "//   Symbols:          %d\n"
+        "//   Symbol size:      %d bits\n"
+        "//   Sub-CodeWords:    %d\n"
+        "//   Metadata bits:    %d\n"
+        "//   ECC gap patterns: %llu\n"
+        , ro.symbols
+        , ro.symbolSize* ro.codewords
+        , ro.codewords
+        , metadataBits
+        , (1ULL << metadataBits) - 1
+    );
+    if (metadataBits < 6) // Up to 31 gap patterns, print them out
+    {
+        pTemp = (pAlphaS[0] << 1) | 1;
+        for (i = 1; i < (1 << metadataBits); i++)
+        {
+            pTemp2 = 0;
+            for (j = 0; j < metadataBits; j++)
+            {
+                if (i & (1 << j))
+                    pTemp2 ^= (pTemp << j);
+            }
+            fprintf(poutFile, "//     0x");
+            k = ro.symbolSize * ro.codewords;
+            while (k > 0)
+            {
+                m = 0;
+                do
+                {
+                    m <<= 1;
+                    k--;
+                    m |= (pTemp2 >> (k % ro.symbolSize)) & 1;
+                } while (k & 3);
+                fprintf(poutFile, "%x", m);
+            }
+            fprintf(poutFile, "\n");
+        }
+    }
+    fprintf(poutFile,
+        "\nmodule raiddr_crcconstants_%dx%dx%d_%dm(\n"
+        "    output reg [%d:0] v[%d:0],\n"
+        "    output reg [%d:0] vs[%d:0]\n"
+        ");\n"
+        "    assign v = {"
+        , ro.symbols, ro.symbolSize, ro.codewords, metadataBits
+        , ro.symbolSize - 1, cwSize - 1
+        , ro.lastCwCrcSize - 1, cwSize - 1
+    );
+    for (i = 0; i < cwSize; i++)
+    {
+        if (i)
+            fprintf(poutFile, ",");
+        if ((i & 7) == 0)
+            fprintf(poutFile, "\n       ");
+        fprintf(poutFile, " %d'h%.*" PRIx64, ro.symbolSize, (ro.symbolSize + 3) >> 2, pAlpha[cwSize - 1 - i]);
+    }
+    fprintf(poutFile, "\n    };\n    assign vs = {");
+    for (i = 0; i < cwSize; i++)
+    {
+        if (i)
+            fprintf(poutFile, ",");
+        if ((i & 7) == 0)
+            fprintf(poutFile, "\n       ");
+        fprintf(poutFile, " %d'h%.*" PRIx64, ro.lastCwCrcSize, (ro.lastCwCrcSize + 3) >> 2, pAlphaS[cwSize - 1 - i]);
+    }
+    fprintf(poutFile, "\n    };\nendmodule\n");
+    
+    free(pAlpha);
+    free(pAlphaS);
+    
+    fprintf(poutFile,
+        "\nmodule raiddr_enc(\n"
+        "    input [%d:0] data,\n"
+        "    input [%d:0] metadata,\n"
+        "    output [%d:0] codeword\n"
+        ");\n"
+        "    wire [%d:0] crcconstants[%d:0];\n"
+        "    wire [%d:0] crcconstants_s[%d:0];\n"
+        "    raiddr_crcconstants_%dx%dx%d_%dm crcconstants_inst(\n"
+        "       .v(crcconstants),\n"
+        "       .vs(crcconstants_s)\n"
+        "    );\n"
+        "    raiddr_encode #(.S_SZ(%d), .CW(%d), .MD(%d), .S_COUNT(%d)) encoder(\n"
+        "        .data(data),\n"
+        "        .metadata(metadata),\n"
+        "        .crcconstants(crcconstants),\n"
+        "        .crcconstants_s(crcconstants_s),\n"
+        "        .codeword(codeword)\n"
+        "    );\n"
+        "endmodule\n"
+        , ri.dataBits - metadataBits - 1
+        , metadataBits - 1
+        , ro.codewords * ro.symbolSize * ro.symbols - 1
+        , ro.symbolSize - 1, ro.symbolSize* (ro.symbols - 1) - 1
+        , ro.lastCwCrcSize - 1, ro.symbolSize* (ro.symbols - 1) - 1
+        , ro.symbols, ro.symbolSize, ro.codewords, metadataBits
+        , ro.symbolSize, ro.codewords, metadataBits, ro.symbols
+    );
+    fprintf(poutFile,
+        "\nmodule raiddr_dec(\n"
+        "    input [%d:0] codeword,\n"
+        "    output [%d:0] data,\n"
+        "    output [%d:0] metadata,\n"
+        "    output reg ue,\n"
+        "    output reg ce,\n"
+        "    output reg [%d:0] ceMask,\n"
+        "    output reg [%d:0] symMask\n"
+        ");\n"
+        "    wire [%d:0] crcconstants[%d:0];\n"
+        "    wire [%d:0] crcconstants_s[%d:0];\n"
+        "    raiddr_crcconstants_%dx%dx%d_%dm crcconstants_inst(\n"
+        "       .v(crcconstants),\n"
+        "       .vs(crcconstants_s)\n"
+        "    );\n"
+        "    raiddr_decode #(.S_SZ(%d), .CW(%d), .MD(%d), .S_COUNT(%d)) decoder(\n"
+        "        .codeword(codeword),\n"
+        "        .crcconstants(crcconstants),\n"
+        "        .crcconstants_s(crcconstants_s),\n"
+        "        .data(data),\n"
+        "        .metadata(metadata),\n"
+        "        .ue(ue),\n"
+        "        .ce(ce),\n"
+        "        .ceMask(ceMask),\n"
+        "        .symMask(symMask)\n"
+        "    );\n"
+        "endmodule\n"
+        "\n"
+        "// *** End of Generated RAIDDR Initialization\n"
+        , ro.codewords * ro.symbolSize * ro.symbols - 1
+        , ri.dataBits - metadataBits - 1
+        , metadataBits - 1
+        , ro.symbolSize * ro.codewords - 1
+        , ro.symbols - 1
+        , ro.symbolSize - 1, ro.symbolSize * (ro.symbols - 1) - 1
+        , ro.lastCwCrcSize - 1, ro.symbolSize * (ro.symbols - 1) - 1
+        , ro.symbols, ro.symbolSize, ro.codewords, metadataBits
+        , ro.symbolSize, ro.codewords, metadataBits, ro.symbols
+    );
+
+    return 0;
+}
+
