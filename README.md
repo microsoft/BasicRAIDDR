@@ -24,3 +24,7 @@ SUPPORT.md --> Information on how to contact Microsoft for support
 RaiddrBasic_InitRTL --> Code for automated RTL generation based on user inputs  
 RaiddrBasic_RTL --> Example full RTL code and test code for a specific DDR5 implementation  
 RaiddrBasic_Validate --> C code for Basic RAIDDR simulation in software  
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow Microsoft’s Trademark & Brand Guidelines. Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party’s policies.
