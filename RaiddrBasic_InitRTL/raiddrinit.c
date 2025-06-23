@@ -1,10 +1,10 @@
 // ********************************************************
-// ** raiddrinit.cpp **
+// ** raiddrinit.c **
 //
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Version: 1.0.1
+// Version: 1.0.2
 // Author: Brett Dodds (brett.dodds@microsoft.com)
 // 
 // For easy RTL creation of different Basic RAIDDR
@@ -12,16 +12,19 @@
 // ********************************************************
 #if defined(_WIN32)
     #define SCANF           scanf_s
-    #define FOPEN(a,b,c)    fopen_s(a,b,c)
+    #define SCANFS(a,b,c)   scanf_s(a,b,c)
+    #define STRNCPY(a,b,c)  strncpy_s(a,c,b,c)
 #elif defined(__linux__)
     #define SCANF           scanf
-    #define FOPEN(a,b,c)    fopen(b,c)
+    #define SCANFS(a,b,c)   scanf(a,b)
+    #define STRNCPY         strncpy
 #endif
 
 #define MAX_PATH        512
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <inttypes.h>
 
 typedef struct _RAIDDR_INPUTS
@@ -161,9 +164,11 @@ int32_t GenerateAlphaTable(int32_t bits, int32_t crcBits, uint64_t* p)
 int main(int argc, char* argv[])
 {
     int32_t arg, i, j, k, m, n, x, y, c;
+    int32_t minCrcSize;
     int32_t crcSize;
     int32_t cwSize;
     int32_t metadataBits;
+    char yn;
     RAIDDR_INPUTS ri;
     RAIDDR_ORG ro;
     uint64_t basepoly = 0xABCDEF0123456789;
@@ -183,31 +188,52 @@ int main(int argc, char* argv[])
     {
         if (argv[arg][0] == '-' || argv[arg][0] == '/')
         {
-            switch (argv[arg][1])
+            // For switches that don't have a value after them...
+            if (argv[arg][1] == '?' || argv[arg][1] == 'h' || (argv[arg][1] == '-' && argv[arg][2] == 'h')) // This is the help switch first
             {
-                case 'c':
-                    ri.cwBits = atoi(argv[arg + 1]);
-                    arg++;
-                    break;
-                case 'd':
-                    ri.dataBits = atoi(argv[arg + 1]);
-                    arg++;
-                    break;
-                case 's':
-                    ri.symbolBits = atoi(argv[arg + 1]);
-                    arg++;
-                    break;
-                case 'p':
-                    ri.subCodewords = atoi(argv[arg + 1]);
-                    arg++;
-                    break;
-                case '?':
-                    showhelp();
-                    return 0;
-                default:
-                    printf("Unknown option: %s\n", argv[arg]);
+                showhelp();
+                return 0;
+            }
+            // else if () // For other switches that are boolean
+            else
+            {
+                // Make sure there is data behind this
+                #if defined(_WIN32)
+                if (arg + 1 >= argc || argv[arg + 1][0] == '-' || argv[arg + 1][0] == '/')
+                #else
+                if (arg + 1 >= argc || argv[arg + 1][0] == '-')
+                #endif
+                {
+                    printf("Invalid parameter specified after option '%c'\n", argv[arg][1]);
                     showhelp();
                     return 1;
+                }
+                switch (argv[arg][1])
+                {
+                    case 'c':
+                        ri.cwBits = atoi(argv[arg + 1]);
+                        break;
+                    case 'd':
+                        ri.dataBits = atoi(argv[arg + 1]);
+                        break;
+                    case 's':
+                        ri.symbolBits = atoi(argv[arg + 1]);
+                        break;
+                    case 'p':
+                        ri.subCodewords = atoi(argv[arg + 1]);
+                        break;
+                    case 'o':
+                        STRNCPY(outFileName, argv[arg + 1], MAX_PATH);
+                        break;
+                    case '?':
+                        showhelp();
+                        return 0;
+                    default:
+                        printf("Unknown option: %s\n", argv[arg]);
+                        showhelp();
+                        return 1;
+                }
+                arg++;
             }
         }
     }
@@ -231,6 +257,22 @@ int main(int argc, char* argv[])
 
     // Validate inputs
     i = ValidateInputs(ri);
+    if (i == VIERROR_DATAPLUSSYM_GT_CW)
+    {
+        printf("Problem: Specified symbol size is too large. Adjust symbol size to maximize capability? (y/n): ");
+        if (SCANFS(" %c", &yn, 1) != 1)
+        {
+            printf("Response error");
+            return 1;
+        }
+        if (yn == 'y' || yn == 'Y')
+        {
+            ri.symbolBits = ((ri.cwBits - ri.dataBits) + 1) / 2;
+            i = ValidateInputs(ri);
+        }
+        else
+            return 1;
+    }
     if (i < 0)
     {
         switch (i)
@@ -259,8 +301,11 @@ int main(int argc, char* argv[])
 
     // Derive organization
     ro.symbols = ri.cwBits / ri.symbolBits;
+    minCrcSize = 1;
+    while (1 << minCrcSize < ro.symbols)
+        minCrcSize++;
     crcSize = ri.cwBits - ri.dataBits - ri.symbolBits; // CRC Size tells us how many bits we have to be able to do CRC
-    if (crcSize <= 0)
+    if (crcSize < minCrcSize)
     {
         printf("Error with input parameters: Note enough bits for ECC\n");
         return 1;
@@ -274,6 +319,8 @@ int main(int argc, char* argv[])
     else
     {
         ro.symbolSize = ri.symbolBits - crcSize + 1;
+        if (ro.symbolSize < minCrcSize)
+            ro.symbolSize = minCrcSize;
         while (ri.symbolBits % ro.symbolSize)
             ro.symbolSize++;
         ro.codewords = ri.symbolBits / ro.symbolSize;
@@ -368,13 +415,18 @@ int main(int argc, char* argv[])
         poutFile = stdout;
     else
     {
-        FOPEN(&poutFile, outFileName, "w");
+        #if defined(_WIN32)
+            fopen_s(&poutFile, outFileName, "w");
+        #else
+            poutFile = fopen(outFileName, "w");
+        #endif
         if (poutFile == NULL)
         {
             printf("Error opening output file: %s\n", outFileName);
             printf("...Using stdout instead\n");
             poutFile = stdout;
         }
+        printf("Saving output to: %s\n", outFileName);
     }
     fprintf(poutFile,
         "// Basic RAIDDR RTL File generated by \"raiddrinit\" (C) Microsoft Corp.\n"
