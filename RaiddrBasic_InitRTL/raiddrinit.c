@@ -84,6 +84,8 @@ void showhelp()
     printf("  -?          Show this help\n");
 }
 
+// Note, these polynomials may not be the most optimal.
+// We suggest you review ECC gaps and determine whether a polynomial with more terms would be better.
 static const uint64_t __primitiveRevPoly[65] = {
     0x0000000000000000,    //0x1,
     0x0000000000000001,    //0x3,
