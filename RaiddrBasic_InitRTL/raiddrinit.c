@@ -4,7 +4,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Version: 1.0.2
+// Version: 1.0.3
 // Author: Brett Dodds (brett.dodds@microsoft.com)
 // 
 // For easy RTL creation of different Basic RAIDDR
