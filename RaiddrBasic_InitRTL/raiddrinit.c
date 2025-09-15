@@ -4,7 +4,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Version: 1.0.3
+// Version: 1.0.4
 // Author: Brett Dodds (brett.dodds@microsoft.com)
 // 
 // For easy RTL creation of different Basic RAIDDR
@@ -84,6 +84,8 @@ void showhelp()
     printf("  -?          Show this help\n");
 }
 
+#define SIMPLE_POLYNOMIALS  0 // Comment out or set to 0 to use more complex polynomials
+#if defined(SIMPLE_POLYNOMIALS) && SIMPLE_POLYNOMIALS == 1 // Simple polynomials for CRC generation
 // Note, these polynomials may not be the most optimal.
 // We suggest you review ECC gaps and determine whether a polynomial with more terms would be better.
 static const uint64_t __primitiveRevPoly[65] = {
@@ -153,6 +155,82 @@ static const uint64_t __primitiveRevPoly[65] = {
     0x6000000000000000,    //0x8000000000000003,
     0x8040000020000004     //0x12000000400000201,
 };
+#else
+// Polynomials for orders up to 31 & 64 selected from: https://users.ece.cmu.edu/~koopman/crc/notes.html (by Philip Koopman. Licensed under: https://creativecommons.org/licenses/by/4.0/)
+// Polynomials for orders from 32 to 50 are brute-force generated irreducible polynomials 
+// Polynomials for orders 51 to 63 selected from: https://poincare.matf.bg.ac.rs/~ezivkovm/publications/primpol1.pdf (Miodrag Zivkovic)
+static const uint64_t __primitiveRevPoly[65] = {
+    0x0000000000000000,    //0x1, // CRC-0 (Not useful, placeholder for indexing)
+    // Selected from: https://users.ece.cmu.edu/~koopman/crc/notes.html (by Philip Koopman. Licensed under: https://creativecommons.org/licenses/by/4.0/)
+    0x0000000000000001,    //0x3, // CRC-1
+    0x0000000000000003,    //0x7, // CRC-2
+    0x0000000000000006,    //0xB, // CRC-3
+    0x000000000000000C,    //0x13, // CRC-4
+    0x0000000000000017,    //0x3D, // CRC-5
+    0x0000000000000039,    //0x67, // CRC-6
+    0x0000000000000069,    //0xCB, // CRC-7
+    0x00000000000000B2,    //0x14D, // CRC-8
+    0x0000000000000198,    //0x233, // CRC-9
+    0x00000000000003C9,    //0x64F, // CRC-10
+    0x000000000000076E,    //0xBB7, // CRC-11
+    0x0000000000000F0C,    //0x130F, // CRC-12
+    0x0000000000001FD5,    //0x357F, // CRC-13
+    0x0000000000003E7C,    //0x4F9F, // CRC-14
+    0x000000000000713C,    //0x9E47, // CRC-15
+    0x000000000000D4D8,    //0x11B2B, // CRC-16
+    0x000000000001E5F6,    //0x2DF4F, // CRC-17
+    0x000000000002D6FA,    //0x57DAD, // CRC-18
+    0x0000000000057640,    //0x81375, // CRC-19
+    0x00000000000FB57A,    //0x15EADF, // CRC-20
+    0x00000000001CEBE3,    //0x38FAE7, // CRC-21
+    0x00000000002D187B,    //0x77862D, // CRC-22
+    0x0000000000773C90,    //0x849E77, // CRC-23
+    0x0000000000F969E4,    //0x127969F, // CRC-24
+    0x000000000131C9EB,    //0x3AF2719, // CRC-25
+    0x0000000003F3B836,    //0x5B0773F, // CRC-26
+    0x0000000007A45C71,    //0xC71D12F, // CRC-27
+    0x000000000BE5FAD4,    //0x12B5FA7D, // CRC-28
+    0x0000000014602AF8,    //0x23EA80C5, // CRC-29
+    0x0000000037313B4A,    //0x54B7233B, // CRC-30
+    0x0000000065D70BF4,    //0x97E875D3, // CRC-31
+    // Brute-force generated irreducible polynomials
+    0x00000000FFF3C0AB,    //0x1D503CFFF, // CRC-32
+    0x000000017874955F,    //0x3F5525C3D, // CRC-33
+    0x0000000249E7A288,    //0x445179E49, // CRC-34
+    0x0000000676E2FA2D,    //0xDA2FA3B73, // CRC-35
+    0x0000000903E73D7E,    //0x17EBCE7C09, // CRC-36
+    0x0000001B68237399,    //0x3339D882DB, // CRC-37
+    0x0000003AA52B13D4,    //0x4AF2352957, // CRC-38
+    0x00000060E9DCA83A,    //0xAE0A9DCB83, // CRC-39
+    0x00000086D9ED1289,    //0x19148B79B61, // CRC-40
+    0x0000015A45748E1A,    //0x2B0E25D44B5, // CRC-41
+    0x0000036FB8B55873,    //0x7386AB477DB, // CRC-42
+    0x0000048A8264F555,    //0xD5579320A89, // CRC-43
+    0x00000EF573B3D6DA,    //0x15B6BCDCEAF7, // CRC-44
+    0x0000165A8B40D7A1,    //0x30BD605A2B4D, // CRC-45
+    0x000032E36705DDD4,    //0x4AEEE839B1D3, // CRC-46
+    0x00004AD642B83C1F,    //0xFC1E0EA135A9, // CRC-47
+    0x0000C20732AA582C,    //0x1341A554CE043, // CRC-48
+    0x0001301ABB7FAFA5,    //0x34BEBFDBAB019, // CRC-49
+    0x0003DDC22926D9E6,    //0x59E6D92510EEF, // CRC-50
+    // Selected from: https://poincare.matf.bg.ac.rs/~ezivkovm/publications/primpol1.pdf (Miodrag Zivkovic)
+    0x0004004816000000,    //0x8000003409001, // CRC-51
+    0x000E000804000002,    //0x14000002010007, // CRC-52
+    0x0011000400808002,    //0x28002020040011, // CRC-53
+    0x0020180060080000,    //0x40000401800601, // CRC-54
+    0x0040004080000608,    //0x88300000810001, // CRC-55
+    0x0084000808020400,    //0x100204010100021, // CRC-56
+    0x0118000002010040,    //0x204010080000031, // CRC-57
+    0x020000040210000C,    //0x4C0002100800001, // CRC-58
+    0x0400003001002020,    //0x820200400600001, // CRC-59
+    0x0800C10010000800,    //0x1001000080083001, // CRC-60
+    0x1000000008402102,    //0x2810804200000001, // CRC-61
+    0x2810280000002000,    //0x4001000000050205, // CRC-62
+    0x4240110000000004,    //0x9000000000440121, // CRC-63
+    // Selected from: https://users.ece.cmu.edu/~koopman/crc/notes.html (by Philip Koopman. Licensed under: https://creativecommons.org/licenses/by/4.0/)
+    0x95AC9329AC4BC9B5     //0x1AD93D23594C935A9 // CRC-64
+};
+#endif
 
 int32_t GenerateAlphaTable(int32_t bits, int32_t crcBits, uint64_t* p)
 {
