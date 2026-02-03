@@ -412,8 +412,15 @@ int main(int argc, char* argv[])
     }
     ro.lastCwCrcSize = ro.symbolSize - (ro.codewords * ro.symbolSize - crcSize);
 
+    // We can't handle CRC larger than 64 bits.
+    if (ro.lastCwCrcSize > 64)
+    {
+        printf("Error, this application only supports up to CRC-64. Requested:%d", ro.lastCwCrcSize);
+        return 1;
+    }
+
     // Validate the lastCwCrcSize is big enough to distinguish a symbol, if not... need to decrease the number of subcodewords
-    while ((1 << ro.lastCwCrcSize) < (ro.symbols * (ro.symbolSize - 1)))
+    while (ro.lastCwCrcSize < 64 && (1ULL << ro.lastCwCrcSize) < (ro.symbols * (ro.symbolSize - 1)))
     {
         do
         {
@@ -421,6 +428,11 @@ int main(int argc, char* argv[])
         } while (ri.symbolBits % ro.symbolSize);
         ro.codewords = ri.symbolBits / ro.symbolSize;
         ro.lastCwCrcSize = ro.symbolSize - (ro.codewords * ro.symbolSize - crcSize);
+    }
+    if (ro.lastCwCrcSize > 64)
+    {
+        printf("Error, this application only supports up to CRC-64. Requested:%d", ro.lastCwCrcSize);
+        return 1;
     }
 
     // Show summary
@@ -618,7 +630,7 @@ int main(int argc, char* argv[])
             fprintf(poutFile, ",");
         if ((i & 7) == 0)
             fprintf(poutFile, "\n       ");
-        fprintf(poutFile, " %d'h%.*" PRIx64, ((ro.codewords > 1) ? ro.symbolSize : ro.lastCwCrcSize), (ro.symbolSize + 3) >> 2, pAlpha[cwSize - 1 - i]);
+        fprintf(poutFile, " %d'h%.*" PRIx64, ((ro.codewords > 1) ? ro.symbolSize : ro.lastCwCrcSize), ((ro.codewords > 1) ? (ro.symbolSize + 3) >> 2 : (ro.lastCwCrcSize + 3) >> 2), pAlpha[cwSize - 1 - i]);
     }
     if (ro.codewords > 1)
     {
